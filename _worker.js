@@ -1,4 +1,3 @@
-// 如需要使用环境变量,将462至468行取消注释
 import {connect} from 'cloudflare:sockets';
 
 let subPath = 'link';     // 节点订阅路径,不修改将使用UUID作为订阅路径
@@ -7,7 +6,7 @@ let password = '';  // 节点UUID
 let SSpath = '';          // 路径验证，为空则使用UUID作为验证路径
 
 // 在此感谢各位大佬维护的优选域名
-const SUBAPI = ""
+let SUBAPI = ""
 
 
 function closeSocketQuietly(socket) {
@@ -495,11 +494,13 @@ export default {
         try {
             // if (env.PROXYIP || env.proxyip || env.proxyIP) {
             //     const servers = (env.PROXYIP || env.proxyip || env.proxyIP).split(',').map(s => s.trim());
-            //     //proxyIP = servers[0];
+            //    //proxyIP = servers[0];
             // }
-            // password = env.PASSWORD || env.password || env.uuid || env.UUID || password;
-            // subPath = env.SUB_PATH || env.subpath || subPath;
-            // SSpath = env.SSPATH || env.sspath || SSpath;
+            proxyIP = env.PROXYIP || env.proxyip || env.proxyIP || proxyIP
+            password = env.PASSWORD || env.password || env.uuid || env.UUID || password;
+            subPath = env.SUB_PATH || env.subpath || subPath;
+            SSpath = env.SSPATH || env.sspath || SSpath;
+            SUBAPI = env.SUBAPI || env.subapi || SUBAPI
             if (subPath === 'link' || subPath === '') {
                 subPath = password;
             }
