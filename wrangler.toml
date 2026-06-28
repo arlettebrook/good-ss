@@ -1,4 +1,4 @@
-name = "good-ss"
+name = "good-s"
 main = "_worker.js"
 compatibility_date = "2026-06-28"
 keep_vars = true
