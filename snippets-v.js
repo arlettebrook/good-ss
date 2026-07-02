@@ -1,11 +1,12 @@
 import {connect} from 'cloudflare:sockets';
 
-let proxyIP = 'Pro' + 'xyI' + 'P.US.C' + 'MLi' + 'ussss.net';  // proxyIP
-let yourUUID = '';  // UUID
+let proxyIP = 'Pro' + 'xyI' + 'P.US.C' + 'MLi' + 'ussss.net';  // proxyIP，也可以是socks5或http
+let yourUUID = 'abc';  // UUID
 
-// CF CDN
+// CDN
 // 在此感谢各位大佬维护的优选域名
 let SUBAPI = ""
+
 
 function getHomePageHTML(currentDomain) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Snippets</title><style>body{font-family:Arial,sans-serif;margin:0;padding:40px 20px;background:linear-gradient(135deg,#667eea 0%,#18800e 100%);min-height:100vh;display:flex;align-items:center;justify-content:center}.container{max-width:600px;background:#fff;padding:40px;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.3);text-align:center}h1{color:#667eea;margin-bottom:20px}.info{font-size:18px;color:#666;margin:20px 0}.link{display:inline-block;background:#667eea;color:#fff;padding:12px 30px;border-radius:5px;text-decoration:none;margin-top:20px}.link:hover{background:#5568d3}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #eee;font-size:14px;color:#999}.footer a{color:#667eea;text-decoration:none;margin:0 10px}.footer a:hover{text-decoration:underline}</style></head><body><div class="container"><h1>Hello Snippets</h1><div class="info">请访问: <strong>https://${currentDomain}/你的UUID</strong><br><br>查看订阅和使用说明</div><div class="footer"><a href="https://github.com/eooce/CF-Workers-and-Snip-VLESS" target="_blank">GitHub</a>|<a href="https://t.me/eooceu" target="_blank">TG群组</a></div></div></body></html>`;
@@ -194,9 +195,31 @@ export default {
                 if (url.pathname.toLowerCase().includes(`/sub/${yourUUID}`)) {
                     const currentDomain = url.hostname;
                     const header = 'v' + 'l' + 'e' + 's' + 's';
-                    const cfip = (await fetch(SUBAPI).then((r) => r.text())).split('\n')
-                        .map(line => line.trim())
-                        .filter(line => line.length > 0);
+
+                    let cfip;
+                    try {
+                        const response = await fetch(SUBAPI);
+                        if (!response.ok) {
+                            throw new Error(`HTTP请求异常，状态码: ${response.status}`);
+                        }
+                        const text = await response.text();
+
+                        cfip = text
+                            .split('\n')
+                            .map(line => line.trim())
+                            .filter(line => line.length > 0);
+
+                        // 额外判断：返回列表为空也走兜底
+                        if (cfip.length === 0) {
+                            throw new Error('返回的IP列表为空');
+                        }
+                    } catch (error) {
+                        console.warn('获取CFIP列表失败，已使用默认兜底列表，错误信息：', error);
+                        cfip = [
+                            'mfa.gov.ua#SG', 'saas.sin.fan#JP', 'store.ubi.com#SG', 'cf.130519.xyz#KR', 'cf.008500.xyz#HK',
+                            'cf.090227.xyz#SG', 'cf.877774.xyz#HK', 'cdns.doon.eu.org#JP', 'sub.danfeng.eu.org#TW', 'cf.zhetengsha.eu.org#HK'
+                        ];
+                    }
 
                     const nodeLinks = cfip.map(cdnItem => {
                         let host, port = 443, nodeName = '';
@@ -223,7 +246,7 @@ export default {
                             nodeName = `Snippets-${header}`;
                         }
 
-                        return `${header}://${yourUUID}@${host}:${port}?encryption=none&security=tls&sni=${currentDomain}&fp=firefox&allowInsecure=1&type=ws&host=${currentDomain}&path=%2F%3Fed%3D2560#${nodeName}`;
+                        return `${header}://${yourUUID}@${host}:${port}?encryption=none&security=tls&sni=${currentDomain}&fp=firefox&allowInsecure=0&type=ws&host=${currentDomain}&path=%2F%3Fed%3D2560#${nodeName}`;
                     });
 
                     const linksText = nodeLinks.join('\n');
