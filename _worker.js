@@ -1,17 +1,20 @@
 import {connect} from 'cloudflare:sockets';
 
 let subPath = 'link';     // 节点订阅路径,不修改将使用UUID作为订阅路径
-let proxyIP = 'Pro' + 'xyI' + 'P.US.C' + 'MLi' + 'ussss.net';  // proxyIP 格式：ip、域名、ip:port、域名:port等,没填写port，默认使用443
-let password = '';  // 节点UUID
+let proxyIP = 'Pro' + 'xyI' + 'P.US.C' + 'MLi' + 'ussss.net';  // proxyIP 格式：ip、域名、ip:port、域名:port等,没填写port，默认使用443,也可以是socks5
+let password = 'abc';  // 节点UUID
 let SSpath = '';          // 路径验证，为空则使用UUID作为验证路径
 
-// 在此感谢各位大佬维护的优选域名
+// CF-CDN
+// 感谢各位大佬维护的优选域名
 let SUBAPI = ""
 
+const WS_READY_STATE_OPEN = 1;
+const WS_READY_STATE_CLOSING = 2;
 
 function closeSocketQuietly(socket) {
     try {
-        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CLOSING) {
+        if (socket.readyState === WS_READY_STATE_OPEN || socket.readyState === WS_READY_STATE_CLOSING) {
             socket.close();
         }
     } catch (error) {
@@ -105,8 +108,10 @@ function isSpeedTestSite(hostname) {
 
 async function handleSSRequest(request, customProxyIP) {
     const wssPair = new WebSocketPair();
-    const [clientSock, serverSock] = Object.values(wssPair);
+    const clientSock = wssPair[0];
+    const serverSock = wssPair[1];
     serverSock.accept();
+    serverSock.binaryType = 'arraybuffer';
     let remoteConnWrapper = {socket: null};
     let isDnsQuery = false;
     const earlyData = request.headers.get('sec-websocket-protocol') || '';
@@ -400,8 +405,13 @@ function makeReadableStr(socket, earlyDataHeader) {
     let cancelled = false;
     return new ReadableStream({
         start(controller) {
-            socket.addEventListener('message', (event) => {
-                if (!cancelled) controller.enqueue(event.data);
+            socket.addEventListener('message', async (event) => {
+                if (cancelled) return;
+                let data = event.data;
+                if (data instanceof Blob) {
+                    data = await data.arrayBuffer();
+                }
+                controller.enqueue(data);
             });
             socket.addEventListener('close', () => {
                 if (!cancelled) {
@@ -411,8 +421,13 @@ function makeReadableStr(socket, earlyDataHeader) {
             });
             socket.addEventListener('error', (err) => controller.error(err));
             const {earlyData, error} = base64ToArray(earlyDataHeader);
-            if (error) controller.error(error);
-            else if (earlyData) controller.enqueue(earlyData);
+            if (error) {
+                Promise.resolve().then(() => controller.error(error));
+            } else if (earlyData) {
+                Promise.resolve().then(() => {
+                    if (!cancelled) controller.enqueue(earlyData);
+                });
+            }
         },
         cancel() {
             cancelled = true;
@@ -425,9 +440,11 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
     let header = headerData, hasData = false;
     await remoteSocket.readable.pipeTo(
         new WritableStream({
-            async write(chunk, controller) {
+            async write(chunk) {
                 hasData = true;
-                if (webSocket.readyState !== WebSocket.OPEN) controller.error('wsreadyState not open');
+                if (webSocket.readyState !== WS_READY_STATE_OPEN) {
+                    throw new Error('wsreadyState not open');
+                }
                 if (header) {
                     const response = new Uint8Array(header.length + chunk.byteLength);
                     response.set(header, 0);
@@ -458,7 +475,7 @@ async function forwardataudp(udpChunk, webSocket, respHeader) {
         writer.releaseLock();
         await tcpSocket.readable.pipeTo(new WritableStream({
             async write(chunk) {
-                if (webSocket.readyState === WebSocket.OPEN) {
+                if (webSocket.readyState === WS_READY_STATE_OPEN) {
                     if (vlessHeader) {
                         const response = new Uint8Array(vlessHeader.length + chunk.byteLength);
                         response.set(vlessHeader, 0);
@@ -492,15 +509,13 @@ function getSimplePage(request) {
 export default {
     async fetch(request, env) {
         try {
-            // if (env.PROXYIP || env.proxyip || env.proxyIP) {
-            //     const servers = (env.PROXYIP || env.proxyip || env.proxyIP).split(',').map(s => s.trim());
-            //    //proxyIP = servers[0];
-            // }
             proxyIP = env.PROXYIP || env.proxyip || env.proxyIP || proxyIP
             password = env.PASSWORD || env.password || env.uuid || env.UUID || password;
             subPath = env.SUB_PATH || env.subpath || subPath;
             SSpath = env.SSPATH || env.sspath || SSpath;
             SUBAPI = env.SUBAPI || env.subapi || SUBAPI
+
+
             if (subPath === 'link' || subPath === '') {
                 subPath = password;
             }
@@ -518,7 +533,7 @@ export default {
                 try {
                     pathProxyIP = decodeURIComponent(pathname.substring(9)).trim();
                 } catch (e) {
-                    // ingore error
+                    // ignore error
                 }
                 if (pathProxyIP && !request.headers.get('Upgrade')) {
                     proxyIP = pathProxyIP;
@@ -540,7 +555,7 @@ export default {
                     try {
                         wsPathProxyIP = decodeURIComponent(pathname.substring(9)).trim();
                     } catch (e) {
-                        // ingore error
+                        // ignore error
                     }
                 }
                 const customProxyIP = wsPathProxyIP || url.searchParams.get('proxyip') || request.headers.get('proxyip');
@@ -570,9 +585,31 @@ export default {
                 if (url.pathname.toLowerCase() === `/sub/${subPath.toLowerCase()}` || url.pathname.toLowerCase() === `/sub/${subPath.toLowerCase()}/`) {
                     const currentDomain = url.hostname;
                     const ssHeader = 's' + 's';
-                    const cfip = (await fetch(SUBAPI).then((r) => r.text())).split('\n')
-                        .map(line => line.trim())
-                        .filter(line => line.length > 0);
+
+                    let cfip;
+                    try {
+                        const response = await fetch(SUBAPI);
+                        if (!response.ok) {
+                            throw new Error(`HTTP请求异常，状态码: ${response.status}`);
+                        }
+                        const text = await response.text();
+
+                        cfip = text
+                            .split('\n')
+                            .map(line => line.trim())
+                            .filter(line => line.length > 0);
+
+                        // 额外判断：返回列表为空也走兜底
+                        if (cfip.length === 0) {
+                            throw new Error('返回的IP列表为空');
+                        }
+                    } catch (error) {
+                        console.warn('获取CFIP列表失败，已使用默认兜底列表，错误信息：', error);
+                        cfip = [
+                            'mfa.gov.ua#SG', 'saas.sin.fan#JP', 'store.ubi.com#SG', 'cf.130519.xyz#KR', 'cf.008500.xyz#HK',
+                            'cf.090227.xyz#SG', 'cf.877774.xyz#HK', 'cdns.doon.eu.org#JP', 'sub.danfeng.eu.org#TW', 'cf.zhetengsha.eu.org#HK'
+                        ];
+                    }
 
                     const ssLinks = cfip.map(cdnItem => {
                         let host, port = 443, nodeName = '';
